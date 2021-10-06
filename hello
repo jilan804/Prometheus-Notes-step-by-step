@@ -1,0 +1,507 @@
+01. Prometheus Introduction
+============================
+
+What is Prometheus?
+
+Prometheus is a time series database. Prometheus is designed to monitor targets. Servers, databases, standalone virtual machines, pretty much everything can be monitored with Prometheus.
+
+When does it fit?
+
+Prometheus works well for recording any purely numeric time series
+It fits both machine-centric monitoring and highly dynamic service-oriented architectures.
+Prometheus is designed for reliability, during an system outage it allow you to quickly diagnose problems. 
+Each Prometheus server is standalone, does not depend on any network storage or other remote services.
+When does it not fit?
+
+If you need 100% accuracy, such as for per-request billing, Prometheus is not a good choice
+
+For more information refer :- https://prometheus.io/docs/introduction/overview/
+
+
+02. Install Prometheus
+======================
+
+We will install the latest version of Prometheus on our server.
+
+Before you start, you will need a Linux server. Preferably an unrestricted Ubuntu 16.04 LTS Server with
+root access, since all the commands demonstrated in this are executed on Ubuntu 16.04 LTS Server.
+
+You can use other operating systems, such as Centos 7, but all commands in the course are prepared for 
+Ubuntu 18, so you will experience some differences in syntax or equivalent commands which you may need to 
+research yourself if I can't help you.
+
+Once you have an Ubuntu 18 server ready, you can find the latest version of the Prometheus binary to 
+download at https://prometheus.io/download/
+
+Or just copy/paste this pre created command below for prometheus-2.14.
+
+wget https://github.com/prometheus/prometheus/releases/download/v2.18.1/prometheus-2.18.1.linux-amd64.tar.gz
+
+If all is ok, then we can untar the gz archive.
+
+tar xvfz prometheus-2.14.0.linux-amd64.tar.gz
+
+Now CD into the folder
+
+cd prometheus-2.14.0.linux-amd64
+
+And start it
+
+./prometheus --config.file=prometheus.yml
+
+Prometheus should now be running.
+
+You can visit it at http://[your ip address]:9090
+
+
+Start Prometheus as a Service
+===============================
+
+Stop the running Prometheus process that we left running in the previous lecture, and copy the new files to bin folder.
+
+cp -r . /usr/local/bin/prometheus
+
+Create a file called prometheus.service
+
+sudo nano /etc/systemd/system/prometheus.service
+
+Add the script and save
+
+[Unit]
+Description=Prometheus Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/prometheus/prometheus --config.file=/usr/local/bin/prometheus/prometheus.yml
+
+[Install]
+WantedBy=multi-user.target
+Now start and check the service is running.
+
+sudo service prometheus start
+sudo service prometheus status
+We can now leave the new Prometheus service running. If you ever need to stop the new Prometheus service, then type
+
+sudo service prometheus stop
+sudo service prometheus status
+
+
+03. Install Node Exporter and Start as a Service
+==================================================
+
+Now we will install the Prometheus Node Exporter on our existing server and configure it as a Service so that it keeps running in the background.
+
+We will download the node exporter binary from the Prometheus downloads page at https://prometheus.io/download/#node_exporter
+
+Download Prometheus Node Exporter Binary SSH into your Prometheus server, and run
+
+wget https://github.com/prometheus/node_exporter/releases/download/v0.18.1/node_exporter-0.18.1.linux-amd64.tar.gz
+
+Untar it,
+
+tar xzf node_exporter-0.18.1.linux-amd64.tar.gz
+
+Copy it to the /usr/local/bin/ folder
+
+cp node_exporter-0.18.1.linux-amd64/node_exporter /usr/local/bin/node_exporter
+
+Configure Prometheus Node Exporter as a Service, Create a file called node-exporter.service
+
+sudo vi /etc/systemd/system/node-exporter.service
+
+Add the script and save
+
+[Unit]
+Description=Prometheus Node Exporter Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/node_exporter
+
+[Install]
+WantedBy=multi-user.target
+
+Now start and check the service is running.
+
+systemctl daemon-reload
+sudo service node-exporter start
+sudo service node-exporter status
+Node exporter will now be running on http://[your domain or ip]:9100/metrics
+
+Add the new scrape config for the new node exporter.
+
+sudo vi /usr/local/bin/prometheus/prometheus.yml Scroll down to the bottom and add a new scrape config
+
+  - job_name: 'node-exporter'
+    static_configs:
+    - targets: ['localhost:9100']
+and restart the prometheus service.
+
+sudo service prometheus restart
+sudo service prometheus status
+
+04. Example Queries
+======================
+
+Now that we have at least 3 scrape targets, we can begin to run some more interesting queries that 
+involve multiple scrape targets.
+
+scrape_duration_seconds
+
+This shows 3 time series results. 1 for each target,
+
+we can filter for 1 target by including either the instance, or job labels
+
+scrape_duration_seconds{instance="localhost:9100"}
+
+Regular Expressions We can also use regular expressions. Go back to the console view and query for 
+node_cpu_seconds_total We should get about 8 time series results. Lets filter for everything with mode containing irq
+
+node_cpu_seconds_total{mode=~".*irq"}
+
+All regular expressions in Prometheus use the re2 syntax.
+
+Data Types Instant vector A set of time series containing a single sample for each time series, all 
+sharing the same timestamp scrape_duration_seconds{instance="localhost:9100"}
+
+Range Vector A set of time series containing a range of data points over time for each time series.
+
+Return a whole range of scrape_duration_seconds (in this case 5 minutes) for the same vector, making it 
+a range vector.
+
+node_netstat_Tcp_InSegs{instance="localhost:9100"}[5m] node_netstat_Tcp_InSegs{instance="localhost:9100"}[1m] node_netstat_Tcp_InSegs{instance="localhost:9100"}[30s]
+
+Press the graph, we get an error saying that expression type "range vector" for range query, must be 
+Scalar or instant Vector
+
+So when in the graph view, remove the [5m] range option.
+
+Functions rate(scrape_duration_seconds{instance="localhost:9100"}[1m:20s])
+
+Start with node_netstat_Tcp_InSegs
+
+create a range vector covering 1m node_netstat_Tcp_InSegs[10m]
+
+filter for the job prometheus node_netstat_Tcp_InSegs{job="prometheus"}[10m]
+
+calculates the per-second average rate of increase of the time series in the range vector 
+rate(node_netstat_Tcp_InSegs[10m])
+
+sum the 2 values sum(go_threads)
+
+Sub Queries Start with this instant vector node_netstat_Tcp_InSegs
+
+Convert ot to a Range Vecorer and then convert it back to an instant vector using rate 
+rate(node_netstat_Tcp_InSegs[1m])
+
+Wrap it in the ceikling funtion ceil(rate(node_netstat_Tcp_InSegs[1m]))
+
+Convert it to a range vecort and get the per-second derivative of the time series 
+deriv(ceil(rate(node_netstat_Tcp_InSegs[1m]))[1m:])
+
+https://prometheus.io/docs/prometheus/latest/querying/functions/
+
+https://github.com/prometheus/prometheus/wiki/Default-port-allocations
+
+
+05. Recording Rules
+===================
+
+Time series queries can quickly become quite complicated to remember and type using the Expression 
+Browser in the default Prometheus User Interface.
+
+Example query
+
+node_memory_MemFree_bytes
+
+node_memory_MemFree_bytes / node_memory_MemTotal_bytes
+
+100 - (100 * node_memory_MemFree_bytes / node_memory_MemTotal_bytes)
+
+Rather than remembering and typing this query every time, we can create a recording rule that will run 
+at a chosen interval and make the data available as a time series.
+
+Recording Rule Example 1
+cd into the /usr/local/bin/prometheus folder
+
+cd /usr/local/bin/prometheus Create a new file called prometheus_rules.yml
+
+sudo vi prometheus_rules.yml Add our test expression as a recording rule
+
+     - name: custom_rules
+       rules:
+         - record: node_memory_MemFree_percent
+           expr: 100 - (100 * node_memory_MemFree_bytes / node_memory_MemTotal_bytes)
+Save it and we can now verify the syntax is ok.
+
+Prometheus now comes with a tool called Promtool which you can use to check your rules files and other 
+things.
+
+We will check our rules file is ok.
+
+./promtool check rules prometheus_rules.yml
+
+The response should contain SUCCESS otherwise there was a problem with your prometheus_rules.yml file.
+
+Now lets add the prometheus_rules.yml reference to the prometheus.yml rule_files section.
+
+     - "prometheus_rules.yml"
+and restart the prometheus service.
+
+sudo service prometheus restart
+sudo service prometheus status
+Refresh the Prometheus user interface and check the drop down and you will be able to see 
+node_memory_MemFree_percent
+
+Recording Rule Example 2
+Lets do another more complicated example.
+
+Update our prometheus_rules.yml file with,
+
+groups:
+  - name: custom_rules
+    rules:
+      - record: node_memory_MemFree_percent
+        expr: 100 - (100 * node_memory_MemFree_bytes / node_memory_MemTotal_bytes)
+
+      - record: node_filesystem_free_percent
+        expr: 100 * node_filesystem_free_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}
+
+Check it with the promtool
+
+./promtool check rules prometheus_rules.yml
+If all is ok, restart the prometheus service.
+
+sudo service prometheus restart
+sudo service prometheus status
+Refresh the Prometheus user interface and check the drop down for node_filesystem_free_percent
+
+
+06. Install Prometheus Alert manager
+=====================================
+
+Download the latest Prometheus Alert Manager binary from
+
+https://prometheus.io/download/#alertmanager
+
+wget https://github.com/prometheus/alertmanager/releases/download/v0.19.0/alertmanager-0.19.0.linux-amd64.tar.gz
+tar xvfz alertmanager-0.19.0.linux-amd64.tar.gz
+CD into the new alertmanager-0.19.0.linux-amd64 folder
+
+cd alertmanager-0.19.0.linux-amd64
+ls -ltr
+Try and run it,
+
+./alertmanager --config.file=alertmanager.yml
+Note that it's running on port 9093
+
+Stop the running process, and copy the new files to bin folder.
+
+cp -r . /usr/local/bin/alertmanager
+Create a file called alertmanager.service
+
+sudo vi/etc/systemd/system/alertmanager.service
+Add the script and save
+
+[Unit]
+Description=Prometheus Alert Manager Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/alertmanager/alertmanager \
+        --config.file=/usr/local/bin/alertmanager/alertmanager.yml 
+[Install]
+WantedBy=multi-user.target
+Now start and check the service is running.
+
+sudo service alertmanager start
+sudo service alertmanager status
+We can now leave the new Prometheus Alert Manager service running. If you ever need to stop the new 
+Prometheus Alert Manager service, then type
+
+sudo service alertmanager stop
+sudo service alertmanager status
+Try http://your_ip_adrress:9093/
+
+
+
+07. Alerting Rules
+===================
+
+Alerting rules are created in Prometheus very similar to how you create recording rules. 
+We can use the same prometheus_rules.yml or, if you wish, create a different file but remember to 
+add the reference to it in the rule_files section in prometheus.yml
+
+We will create a new group named alert_rules.
+
+And add the script below.
+
+  - name: alert_rules
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Instance [{{ $labels.instance }}] down"
+          description: "[{{ $labels.instance }}] of job [{{ $labels.job }}] has been down for more than 1 minute."
+
+Save it and test it with the promtool
+
+./promtool check rules prometheus_rules.yml
+If everything is ok, then restart Prometheus.
+
+sudo service prometheus restart
+sudo service prometheus status
+Next we create another rule that uses one of the Recording rules we created in the previous lecture, 
+node_filesystem_free_percent
+
+  - alert: DiskSpaceFree10Percent
+    expr: node_filesystem_free_percent <= 10
+    labels:
+      severity: warning
+    annotations:
+      summary: "Instance [{{ $labels.instance }}] has 10% or less Free disk space"
+      description: "[{{ $labels.instance }}] has only {{ $value }}% or less free."
+
+
+08. Configure Alert Manager to Send Alerts from Prometheus
+===========================================================
+
+Edit Alert Manager Configuration Open the Alert Manager config file, and replace the config with this 
+below.
+
+sudo vi /usr/local/bin/alertmanager/alertmanager.yml
+copy paste below line on to alertmanager.yml
+
+https://github.com/DeekshithSN/Prometheus/blob/master/alertmeanager.yml
+
+Check your configuration with the supplied amtool
+
+/usr/local/bin/alertmanager/amtool check-config /usr/local/bin/alertmanager/alertmanager.yml
+If all is ok, restart the Alert Manager service.
+
+sudo service alertmanager restart
+sudo service alertmanager status
+Edit Prometheus Configuration Open the prometheus.yml configuration file and add the text below to the 
+alerting section
+
+sudo vi /usr/local/bin/prometheus/prometheus.yml
+
+Add - localhost:9093 to your Alertmanager configuration section
+
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      # alertmanager:9093
+      - localhost:9093
+
+Check the prometheus configuration with the supplied promtool.
+
+/usr/local/bin/prometheus/promtool check config /usr/local/bin/prometheus/prometheus.yml
+sudo service prometheus restart
+sudo service prometheus status
+Test Settings Check the Prometheus UI
+
+[Status]-->[Runtime and Build Information]
+
+Copy the url in the Alertmanagers section
+
+http://localhost:9093/api/v1/alerts
+Test it using curl
+
+curl http://localhost:9093/api/v1/alerts
+The response should be success.
+
+Now Check the Alert Manager UI
+
+and a new scrape target to the prometheus.yml configuration
+
+  - job_name: 'alert-manager'
+    static_configs:
+    - targets: ['localhost:9093']
+And restart
+
+sudo service prometheus restart
+sudo service prometheus status
+
+
+
+
+
+alertmanager.yaml
+===================
+
+
+# api_url = https://hooks.slack.com/services/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
+# channel = prometheusalert
+
+Slack Config:
+==============
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'slack-notifications'
+receivers:
+- name: 'slack-notifications'
+  slack_configs:
+  - api_url: https://hooks.slack.com/services/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
+    channel: '#prometheusalert'
+    send_resolved: true
+
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'dev', 'instance']
+
+
+
+
+Email Config:
+==============
+
+route:
+    group_by: [Alertname]
+    group_interval: 30s
+    repeat_interval: 30s
+    # Send all notifications to me.
+    receiver: email-me
+receivers:
+- name: email-me
+  email_configs:
+  - send_resolved: true
+    to: bavanash873@gmail.com
+    from: reddykumar10697@gmail.com
+    smarthost: smtp.gmail.com:587
+    auth_username: "reddykumar10697@gmail.com"
+    auth_identity: "reddykumar10697@gmail.com"
+    auth_password: "XXXXXXXXXXXXXXXXXX"
+
+
+
+Grfana Download:
+================
+https://grafana.com/grafana/download
+
+For Ubunut:
+-------------
+sudo apt-get install -y adduser libfontconfig1
+wget https://dl.grafana.com/oss/release/grafana_7.5.7_amd64.deb
+sudo dpkg -i grafana_7.5.7_amd64.deb
+
+systemctl start grafana-server
+systemctl status grafana-server
